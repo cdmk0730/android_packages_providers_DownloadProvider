@@ -21,7 +21,7 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.os.Bundle;
 
-import org.cyanogenmod.support.ui.LiveFolder;
+import org.mokee.support.ui.LiveFolder;
 
 public class LiveFolderConfigActivity extends Activity {
 

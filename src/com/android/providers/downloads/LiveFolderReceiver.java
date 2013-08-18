@@ -33,7 +33,7 @@ import android.text.TextUtils;
 
 import com.android.providers.downloads.OpenHelper;
 
-import org.cyanogenmod.support.ui.LiveFolder;
+import org.mokee.support.ui.LiveFolder;
 
 import java.util.ArrayList;
 import java.util.List;
