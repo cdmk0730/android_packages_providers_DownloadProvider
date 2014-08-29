@@ -19,6 +19,7 @@ package com.android.providers.downloads;
 import static com.android.providers.downloads.Constants.LOGV;
 import static com.android.providers.downloads.Constants.TAG;
 
+import android.app.Activity;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.res.Resources;
@@ -27,6 +28,7 @@ import android.database.sqlite.SQLiteException;
 import android.net.Uri;
 import android.os.Environment;
 import android.os.StatFs;
+import android.os.storage.StorageVolume;
 import android.provider.Downloads;
 import android.text.TextUtils;
 import android.util.Log;
@@ -77,6 +79,8 @@ class StorageManager {
 
     /** misc members */
     private final Context mContext;
+    private static String sdCardStorageDir;
+    private static final String LOGTAG = "StorageManager";
 
     public StorageManager(Context context) {
         mContext = context;
@@ -84,6 +88,11 @@ class StorageManager {
         mExternalStorageDir = Environment.getExternalStorageDirectory();
         mSystemCacheDir = Environment.getDownloadCacheDirectory();
         startThreadToCleanupDatabaseAndPurgeFileSystem();
+        if (isSecondStorageSupported(context)) {
+            sdCardStorageDir = getExternalStorageDirectory(context);
+        } else {
+            sdCardStorageDir = null;
+        }
     }
 
     /** How often should database and filesystem be cleaned up to remove spurious files
@@ -116,17 +125,18 @@ class StorageManager {
         mCleanupThread.start();
     }
 
-    void verifySpaceBeforeWritingToFile(int destination, String path, long length)
+    void verifySpaceBeforeWritingToFile(Context context, int destination, String path, long length)
             throws StopRequestException {
         // do this check only once for every 1MB of downloaded data
         if (incrementBytesDownloadedSinceLastCheckOnSpace(length) <
                 FREQUENCY_OF_CHECKS_ON_SPACE_AVAILABILITY) {
             return;
         }
-        verifySpace(destination, path, length);
+        verifySpace(context, destination, path, length);
     }
 
-    void verifySpace(int destination, String path, long length) throws StopRequestException {
+    void verifySpace(Context context, int destination, String path,
+            long length) throws StopRequestException {
         resetBytesDownloadedSinceLastCheckOnSpace();
         File dir = null;
         if (Constants.LOGV) {
@@ -149,7 +159,9 @@ class StorageManager {
                 dir = mSystemCacheDir;
                 break;
             case Downloads.Impl.DESTINATION_FILE_URI:
-                if (path.startsWith(mExternalStorageDir.getPath())) {
+                if (isSecondStorageSupported(context) && path.startsWith(sdCardStorageDir)) {
+                    dir = new File(sdCardStorageDir);
+                } else if (path.startsWith(mExternalStorageDir.getPath())) {
                     dir = mExternalStorageDir;
                 } else if (path.startsWith(mDownloadDataDir.getPath())) {
                     dir = mDownloadDataDir;
@@ -162,7 +174,7 @@ class StorageManager {
             throw new IllegalStateException("invalid combination of destination: " + destination +
                     ", path: " + path);
         }
-        findSpace(dir, length, destination);
+        findSpace(context, dir, length, destination);
     }
 
     /**
@@ -170,16 +182,18 @@ class StorageManager {
      * specified by the input param(targetBytes).
      * returns true if found. false otherwise.
      */
-    private synchronized void findSpace(File root, long targetBytes, int destination)
-            throws StopRequestException {
+    private synchronized void findSpace(Context context, File root, long targetBytes,
+            int destination) throws StopRequestException {
         if (targetBytes == 0) {
             return;
         }
-        if (destination == Downloads.Impl.DESTINATION_FILE_URI ||
-                destination == Downloads.Impl.DESTINATION_EXTERNAL) {
-            if (!Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
-                throw new StopRequestException(Downloads.Impl.STATUS_DEVICE_NOT_FOUND_ERROR,
-                        "external media not mounted");
+        if (!(isSecondStorageSupported(context) && root.getPath().startsWith(sdCardStorageDir))) {
+            if (destination == Downloads.Impl.DESTINATION_FILE_URI ||
+                    destination == Downloads.Impl.DESTINATION_EXTERNAL) {
+                if (!Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
+                    throw new StopRequestException(Downloads.Impl.STATUS_DEVICE_NOT_FOUND_ERROR,
+                            "external media not mounted");
+                }
             }
         }
         // is there enough space in the file system of the given param 'root'.
@@ -468,5 +482,37 @@ class StorageManager {
 
     private synchronized void resetBytesDownloadedSinceLastCheckOnSpace() {
         mBytesDownloadedSinceLastCheckOnSpace = 0;
+    }
+
+    /**
+     * Whether the device supports second storage
+     * @return boolean true support second storage, false does not
+     */
+    public static boolean isSecondStorageSupported(Context context) {
+        android.os.storage.StorageManager storageManager =
+                (android.os.storage.StorageManager) context
+                        .getSystemService(Context.STORAGE_SERVICE);
+        StorageVolume[] volumes = storageManager.getVolumeList();
+        for (int i = 0; i < volumes.length; i++) {
+            if (!volumes[i].isPrimary() && volumes[i].allowMassStorage()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static String getExternalStorageDirectory(Context context) {
+        String sdCardDir = null;
+        android.os.storage.StorageManager storageManager =
+                (android.os.storage.StorageManager) context
+                        .getSystemService(Context.STORAGE_SERVICE);
+        StorageVolume[] volumes = storageManager.getVolumeList();
+        for (int i = 0; i < volumes.length; i++) {
+            if (volumes[i].isRemovable() && volumes[i].allowMassStorage()) {
+                sdCardDir = volumes[i].getPath();
+                break;
+            }
+        }
+        return sdCardDir;
     }
 }
